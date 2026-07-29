@@ -1,0 +1,248 @@
+"""The eSMS Africa SMS client."""
+
+from __future__ import annotations
+
+import json
+import random
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+
+from .errors import EsmsConnectionError, EsmsError, error_from_response
+from .models import Balance, Message, MessageList, MessageSummary, Route, SendResult
+
+__version__ = "1.0.0"
+
+DEFAULT_BASE_URL = "https://sms.esmsafrica.io/api"
+
+
+class Esms:
+    """Client for the eSMS Africa SMS API.
+
+    Example::
+
+        from esms import Esms
+
+        esms = Esms(api_key="esms_live_...")
+        res = esms.messages.send(to="+256700000000", text="Hello!")
+        print(res.id, res.status)
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = DEFAULT_BASE_URL,
+        timeout: float = 30.0,
+        max_retries: int = 2,
+    ) -> None:
+        if not api_key:
+            raise ValueError(
+                "An API key is required. Create one in the eSMS dashboard "
+                "under Developers -> API Keys."
+            )
+        self._api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self._timeout = timeout
+        self._max_retries = max_retries
+
+        self.messages = MessagesResource(self)
+        self.balance = BalanceResource(self)
+        self.routes = RoutesResource(self)
+
+    # ── transport ────────────────────────────────────────────────────
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        body: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        url = self.base_url + path
+        if params:
+            clean = {k: v for k, v in params.items() if v is not None}
+            if clean:
+                url += "?" + urllib.parse.urlencode(clean)
+
+        data = None
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Accept": "application/json",
+            "User-Agent": f"esms-python/{__version__}",
+        }
+        if body is not None:
+            clean_body = {k: v for k, v in body.items() if v is not None}
+            data = json.dumps(clean_body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        last_exc: Optional[BaseException] = None
+        for attempt in range(self._max_retries + 1):
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                    raw = resp.read().decode("utf-8")
+                    return json.loads(raw) if raw else None
+            except urllib.error.HTTPError as e:
+                raw = e.read().decode("utf-8", "replace")
+                parsed = _safe_json(raw)
+                request_id = e.headers.get("X-Request-Id") if e.headers else None
+                if (e.code == 429 or e.code >= 500) and attempt < self._max_retries:
+                    last_exc = error_from_response(e.code, parsed, request_id)
+                    time.sleep(_backoff(attempt, e.headers.get("Retry-After") if e.headers else None))
+                    continue
+                raise error_from_response(e.code, parsed, request_id) from None
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                last_exc = e
+                if attempt < self._max_retries:
+                    time.sleep(_backoff(attempt, None))
+                    continue
+                raise EsmsConnectionError(
+                    f"Could not reach the eSMS API: {e}"
+                ) from e
+        if isinstance(last_exc, EsmsError):
+            raise last_exc
+        raise EsmsConnectionError("Request failed")
+
+
+class MessagesResource:
+    def __init__(self, client: Esms) -> None:
+        self._c = client
+
+    def send(
+        self,
+        *,
+        to: str,
+        text: str,
+        sender_id: Optional[str] = None,
+        route: Optional[str] = None,
+        schedule_mode: Optional[str] = None,
+        scheduled_at: Optional[Union[str, datetime]] = None,
+    ) -> SendResult:
+        """Send a single SMS."""
+        if isinstance(scheduled_at, datetime):
+            scheduled_at = scheduled_at.isoformat()
+        body = {
+            "to": to,
+            "text": text,
+            "sender_id": sender_id,
+            "route": route,
+            "schedule_mode": schedule_mode,
+            "scheduled_at": scheduled_at,
+        }
+        return SendResult.from_dict(self._c._request("POST", "/messages/send", body=body))
+
+    def schedule(
+        self,
+        *,
+        to: str,
+        text: str,
+        scheduled_at: Union[str, datetime],
+        sender_id: Optional[str] = None,
+        route: Optional[str] = None,
+    ) -> SendResult:
+        """Schedule an SMS for later delivery (5 minutes to 7 days out)."""
+        return self.send(
+            to=to,
+            text=text,
+            sender_id=sender_id,
+            route=route,
+            schedule_mode="scheduled",
+            scheduled_at=scheduled_at,
+        )
+
+    def list(
+        self,
+        *,
+        page: int = 0,
+        limit: int = 20,
+        status: Optional[str] = None,
+    ) -> MessageList:
+        """List messages, most recent first."""
+        data = self._c._request(
+            "GET", "/messages", params={"page": page, "limit": limit, "status": status}
+        )
+        return MessageList(
+            messages=[MessageSummary.from_dict(m) for m in data.get("messages", [])],
+            total=int(data.get("total", 0)),
+            page=int(data.get("page", 0)),
+            limit=int(data.get("limit", 0)),
+        )
+
+    def get(self, message_id: str) -> Message:
+        """Fetch a single message with its full delivery timeline."""
+        data = self._c._request(
+            "GET", f"/messages/{urllib.parse.quote(message_id)}"
+        )
+        return Message.from_dict(data)
+
+    def retry(self, message_id: str) -> SendResult:
+        """Retry a failed message."""
+        data = self._c._request(
+            "POST", f"/messages/{urllib.parse.quote(message_id)}/retry"
+        )
+        return SendResult.from_dict(data)
+
+    def send_bulk(
+        self,
+        *,
+        contact_list_ids: List[int],
+        text: str,
+        sender_id: Optional[str] = None,
+        route: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send one message to every contact in the given contact lists."""
+        return self._c._request(
+            "POST",
+            "/messages/send-bulk",
+            body={
+                "contact_list_ids": contact_list_ids,
+                "text": text,
+                "sender_id": sender_id,
+                "route": route,
+            },
+        )
+
+
+class BalanceResource:
+    def __init__(self, client: Esms) -> None:
+        self._c = client
+
+    def get(self) -> Balance:
+        """Get the current account balance and an SMS estimate."""
+        d = self._c._request("GET", "/balance")
+        return Balance(
+            balance=float(d.get("balance", 0) or 0),
+            currency=str(d.get("currency", "")),
+            sms_estimate=d.get("sms_estimate"),
+        )
+
+
+class RoutesResource:
+    def __init__(self, client: Esms) -> None:
+        self._c = client
+
+    def list(self) -> List[Route]:
+        """List all active routes (one per country you can reach)."""
+        data = self._c._request("GET", "/routes")
+        return [Route.from_dict(r) for r in (data or [])]
+
+
+def _safe_json(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return raw
+
+
+def _backoff(attempt: int, retry_after: Optional[str]) -> float:
+    if retry_after:
+        try:
+            return min(float(retry_after), 20.0)
+        except ValueError:
+            pass
+    base = min(0.5 * (2 ** attempt), 10.0)
+    return base + base * 0.2 * random.random()
