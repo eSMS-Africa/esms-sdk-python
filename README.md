@@ -22,7 +22,7 @@ esms = Esms(api_key="esms_live_...")
 res = esms.messages.send(
     to="+256700000000",
     text="Your verification code is 123456",
-    sender_id="eSMSAfrica",  # optional — falls back to the route default
+    sender_id="eSMSAfrica",  # optional - falls back to the route default
 )
 
 print(res.id, res.status)  # "...", "submitted"
@@ -98,13 +98,13 @@ except EsmsError as e:
 
 | Class | When |
 |-------|------|
-| `AuthenticationError` | 401 — key missing or invalid |
-| `PermissionDenied` | 403 — not allowed |
-| `NotFoundError` | 404 — no such message |
-| `InvalidRequestError` | 400 / 422 — bad request |
-| `InsufficientBalanceError` | 422 — not enough credit (`.balance`, `.cost`, `.currency`) |
-| `RateLimitError` | 429 — slow down |
-| `ApiError` | 5xx — server error |
+| `AuthenticationError` | 401 - key missing or invalid |
+| `PermissionDenied` | 403 - not allowed |
+| `NotFoundError` | 404 - no such message |
+| `InvalidRequestError` | 400 / 422 - bad request |
+| `InsufficientBalanceError` | 422 - not enough credit (`.balance`, `.cost`, `.currency`) |
+| `RateLimitError` | 429 - slow down |
+| `ApiError` | 5xx - server error |
 | `EsmsConnectionError` | network failure or timeout |
 
 ## Configuration
