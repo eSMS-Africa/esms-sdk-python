@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import random
 import time
@@ -52,6 +54,22 @@ class Esms:
         self.messages = MessagesResource(self)
         self.balance = BalanceResource(self)
         self.routes = RoutesResource(self)
+        self.verify = VerifyResource(self)
+        self.opt_outs = OptOutsResource(self)
+
+    @staticmethod
+    def verify_webhook(raw_body: Union[str, bytes], signature: Optional[str], secret: str) -> bool:
+        """Verify an incoming webhook's HMAC-SHA256 signature (constant-time).
+
+        raw_body   the exact raw request body (str or bytes), not re-serialized.
+        signature  the ``X-Webhook-Signature`` header value (e.g. ``sha256=...``).
+        secret     your webhook signing secret.
+        """
+        if not signature or not secret:
+            return False
+        body = raw_body.encode() if isinstance(raw_body, str) else raw_body
+        expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature, expected)
 
     # ── transport ────────────────────────────────────────────────────
     def _request(
@@ -229,6 +247,44 @@ class RoutesResource:
         """List all active routes (one per country you can reach)."""
         data = self._c._request("GET", "/routes")
         return [Route.from_dict(r) for r in (data or [])]
+
+
+class VerifyResource:
+    """Managed OTP verification — we generate, send, and check the code."""
+
+    def __init__(self, client: Esms) -> None:
+        self._c = client
+
+    def start(self, to: str, *, sender_id: Optional[str] = None, code_length: Optional[int] = None,
+              expiry_seconds: Optional[int] = None, template: Optional[str] = None) -> Dict[str, Any]:
+        """Send a verification code to a phone number."""
+        body = {"to": to, "sender_id": sender_id, "code_length": code_length,
+                "expiry_seconds": expiry_seconds, "template": template}
+        return self._c._request("POST", "/verify/start", body={k: v for k, v in body.items() if v is not None})
+
+    def check(self, code: str, *, verification_id: Optional[str] = None, to: Optional[str] = None) -> Dict[str, Any]:
+        """Check a code the user entered. Returns ``{"status": "approved" | "pending" | ...}``."""
+        body = {"code": code, "verification_id": verification_id, "to": to}
+        return self._c._request("POST", "/verify/check", body={k: v for k, v in body.items() if v is not None})
+
+
+class OptOutsResource:
+    """Manage the opt-out (STOP / DND) list."""
+
+    def __init__(self, client: Esms) -> None:
+        self._c = client
+
+    def list(self) -> List[Dict[str, Any]]:
+        """List numbers that have opted out of your messages."""
+        return (self._c._request("GET", "/opt-outs") or {}).get("opt_outs", [])
+
+    def add(self, phone: str) -> Dict[str, Any]:
+        """Manually add a number to your opt-out list."""
+        return self._c._request("POST", "/opt-outs", body={"phone": phone})
+
+    def remove(self, phone: str) -> Dict[str, Any]:
+        """Remove a number from your opt-out list."""
+        return self._c._request("DELETE", "/opt-outs/" + urllib.parse.quote(phone))
 
 
 def _safe_json(raw: str) -> Any:
