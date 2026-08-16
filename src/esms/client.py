@@ -79,6 +79,7 @@ class Esms:
         *,
         params: Optional[Dict[str, Any]] = None,
         body: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> Any:
         url = self.base_url + path
         if params:
@@ -87,11 +88,14 @@ class Esms:
                 url += "?" + urllib.parse.urlencode(clean)
 
         data = None
-        headers = {
+        req_headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json",
             "User-Agent": f"esms-python/{__version__}",
         }
+        if headers:
+            req_headers.update({k: v for k, v in headers.items() if v is not None})
+        headers = req_headers
         if body is not None:
             clean_body = {k: v for k, v in body.items() if v is not None}
             data = json.dumps(clean_body).encode("utf-8")
@@ -255,17 +259,65 @@ class VerifyResource:
     def __init__(self, client: Esms) -> None:
         self._c = client
 
-    def start(self, to: str, *, sender_id: Optional[str] = None, code_length: Optional[int] = None,
-              expiry_seconds: Optional[int] = None, template: Optional[str] = None) -> Dict[str, Any]:
-        """Send a verification code to a phone number."""
-        body = {"to": to, "sender_id": sender_id, "code_length": code_length,
+    def start(self, to: str, *, app_id: Optional[str] = None, sender_id: Optional[str] = None,
+              code_length: Optional[int] = None, expiry_seconds: Optional[int] = None,
+              template: Optional[str] = None, idempotency_key: Optional[str] = None) -> Dict[str, Any]:
+        """Send a verification code to a phone number.
+
+        Pass ``app_id`` to use a Verify App's brand/template/policy. Pass
+        ``idempotency_key`` to make retries safe (a repeat returns the original)."""
+        body = {"to": to, "app_id": app_id, "sender_id": sender_id, "code_length": code_length,
                 "expiry_seconds": expiry_seconds, "template": template}
-        return self._c._request("POST", "/verify/start", body={k: v for k, v in body.items() if v is not None})
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        return self._c._request("POST", "/verify/start",
+                                body={k: v for k, v in body.items() if v is not None}, headers=headers)
 
     def check(self, code: str, *, verification_id: Optional[str] = None, to: Optional[str] = None) -> Dict[str, Any]:
         """Check a code the user entered. Returns ``{"status": "approved" | "pending" | ...}``."""
         body = {"code": code, "verification_id": verification_id, "to": to}
         return self._c._request("POST", "/verify/check", body={k: v for k, v in body.items() if v is not None})
+
+    def get(self, verification_id: str) -> Dict[str, Any]:
+        """Fetch a verification's status without consuming an attempt."""
+        return self._c._request("GET", f"/verify/{verification_id}")
+
+    def resend(self, verification_id: str) -> Dict[str, Any]:
+        """Send a fresh code for the same verification."""
+        return self._c._request("POST", f"/verify/{verification_id}/resend")
+
+    def cancel(self, verification_id: str) -> Dict[str, Any]:
+        """Void an in-flight verification."""
+        return self._c._request("POST", f"/verify/{verification_id}/cancel")
+
+    def list(self, *, status: Optional[str] = None, app_id: Optional[str] = None,
+             to: Optional[str] = None, page: int = 0, limit: int = 20) -> Dict[str, Any]:
+        """List your verifications (most recent first)."""
+        params = {"status": status, "app_id": app_id, "to": to, "page": page, "limit": limit}
+        return self._c._request("GET", "/verify", params={k: v for k, v in params.items() if v is not None})
+
+    # ---- Verify Apps ----
+    def list_apps(self) -> Dict[str, Any]:
+        """List your Verify Apps."""
+        return self._c._request("GET", "/verify/apps")
+
+    def create_app(self, **fields: Any) -> Dict[str, Any]:
+        """Create a Verify App (name, sender_id, template, code_length, expiry_seconds,
+        max_attempts, allowed_countries, locale, enabled)."""
+        return self._c._request("POST", "/verify/apps", body={k: v for k, v in fields.items() if v is not None})
+
+    def get_app(self, app_id: str) -> Dict[str, Any]:
+        return self._c._request("GET", f"/verify/apps/{app_id}")
+
+    def update_app(self, app_id: str, **fields: Any) -> Dict[str, Any]:
+        """Update a Verify App (full replace - send all fields; name is required)."""
+        return self._c._request("PATCH", f"/verify/apps/{app_id}", body={k: v for k, v in fields.items() if v is not None})
+
+    def delete_app(self, app_id: str) -> None:
+        self._c._request("DELETE", f"/verify/apps/{app_id}")
+
+    def app_stats(self, app_id: str, *, days: int = 30) -> Dict[str, Any]:
+        """Per-app verification stats (starts / success rate)."""
+        return self._c._request("GET", f"/verify/apps/{app_id}/stats", params={"days": days})
 
 
 class OptOutsResource:
