@@ -20,6 +20,8 @@ from .errors import (
 )
 from .models import (
     Balance,
+    BulkSendResult,
+    RetryResult,
     Message,
     MessageList,
     MessageSummary,
@@ -48,6 +50,8 @@ __all__ = [
     "ApiError",
     # models
     "SendResult",
+    "RetryResult",
+    "BulkSendResult",
     "Message",
     "MessageSummary",
     "MessageList",

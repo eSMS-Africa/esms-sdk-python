@@ -2,7 +2,7 @@
 
 Official Python SDK for the [eSMS Africa](https://esmsafrica.io) SMS API.
 
-Send SMS across 14+ African countries, track delivery, schedule messages, and check your balance. Fully typed, zero required dependencies (uses the standard library).
+Send SMS across Africa, track delivery, schedule messages, run managed OTP verification, and check your balance. Fully typed, zero required dependencies (uses the standard library).
 
 ## Install
 
@@ -44,9 +44,21 @@ from datetime import datetime, timedelta, timezone
 esms.messages.schedule(
     to="+256700000000",
     text="Reminder",
-    scheduled_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    scheduled_at=datetime.now(timezone.utc) + timedelta(hours=1),  # naive datetimes are treated as UTC
 )
+
+# Price a message before sending (no charge, no delivery).
+quote = esms.messages.rate(to="+256700000000", text="Hi")
+
+# Send to many numbers at once (inline recipients and/or contact lists).
+batch = esms.messages.send_bulk(
+    recipients=[{"to": "+256700000000"}, {"to": "+254711000000"}],
+    text="Hello from eSMS",
+)
+summary = esms.messages.get_batch(batch.batch_id)
 ```
+
+`messages.send` attaches a random `Idempotency-Key` to every call so a retried request can never send or charge twice. Pass your own `idempotency_key=` to make retries safe across process restarts too.
 
 ## Delivery status
 
@@ -56,11 +68,14 @@ print(msg.status)    # queued | submitted | delivered | failed | ...
 for event in msg.timeline:
     print(event.at, event.event, event.detail)
 
-# List recent messages
+# List recent messages (filters: status, to, batch_id, date_from, date_to, environment)
 page = esms.messages.list(limit=20, status="delivered")
 print(page.total, len(page.messages))
 
-# Retry a failed one
+# Status of up to 100 messages in one call
+statuses = esms.messages.statuses([res.id])["messages"]
+
+# Retry a failed one -> RetryResult(id, status, retry_count)
 esms.messages.retry(res.id)
 ```
 
@@ -72,6 +87,34 @@ print(f"{bal.currency} {bal.balance} (~{bal.sms_estimate} SMS left)")
 
 for r in esms.routes.list():
     print(r.code, r.country_name, f"{r.currency} {r.price_per_segment}/segment")
+```
+
+## Verify (managed OTP)
+
+```python
+v = esms.verify.start("+256700000000")  # or start(to, app_id="...")
+# ...user types the code...
+check = esms.verify.check("123456", verification_id=v["verification_id"])
+if check["status"] == "approved":
+    pass  # verified
+```
+
+Also available: `verify.get`, `verify.resend`, `verify.cancel`, `verify.list`, and Verify Apps (`list_apps`, `create_app`, `get_app`, `update_app`, `delete_app`, `app_stats`).
+
+## Opt-outs
+
+```python
+esms.opt_outs.add("+256700000000")
+opted_out = esms.opt_outs.list()
+esms.opt_outs.remove("+256700000000")
+```
+
+## Webhooks
+
+Delivery-report webhooks are signed with HMAC-SHA256 in the `X-Webhook-Signature` header (`sha256=<hex>`). Verify against the exact raw body:
+
+```python
+ok = Esms.verify_webhook(request.body, request.headers.get("X-Webhook-Signature"), webhook_secret)
 ```
 
 ## Errors
@@ -101,7 +144,7 @@ except EsmsError as e:
 | `AuthenticationError` | 401 - key missing or invalid |
 | `PermissionDenied` | 403 - not allowed |
 | `NotFoundError` | 404 - no such message |
-| `InvalidRequestError` | 400 / 422 - bad request |
+| `InvalidRequestError` | 400 / 409 / 413 / 422 - bad request |
 | `InsufficientBalanceError` | 402 - not enough credit (`.balance`, `.cost`, `.currency`) |
 | `RateLimitError` | 429 - slow down |
 | `ApiError` | 5xx - server error |
@@ -117,6 +160,8 @@ Esms(
     max_retries=2,    # transient failures (network, 429, 5xx) with backoff
 )
 ```
+
+Requests authenticate with `Authorization: Bearer <key>`. Non-idempotent POSTs (bulk sends, retries, OTP resends) are only retried on 429, never after a 5xx or network error, so they cannot run twice.
 
 ## License
 

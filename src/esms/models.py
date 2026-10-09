@@ -12,6 +12,9 @@ def _f(d: Dict[str, Any], key: str, default: Any = None) -> Any:
 
 @dataclass
 class SendResult:
+    """Result of a send. ``balance_after`` is 0 for sandbox sends and
+    idempotent replays (the API omits it); check ``raw`` for extra fields."""
+
     id: str
     status: str
     segments: int
@@ -22,6 +25,7 @@ class SendResult:
     route: str
     balance_after: float
     scheduled_at: Optional[str]
+    encoding: Optional[str] = None
     raw: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     @classmethod
@@ -34,11 +38,58 @@ class SendResult:
             cost_currency=str(_f(d, "cost_currency", "")),
             route_cost=float(_f(d, "route_cost", 0) or 0),
             route_currency=str(_f(d, "route_currency", "")),
-            route=str(_f(d, "route", "")),
+            route=str(_f(d, "route") or ""),
             balance_after=float(_f(d, "balance_after", 0) or 0),
             scheduled_at=_f(d, "scheduled_at"),
+            encoding=_f(d, "encoding"),
             raw=d,
         )
+
+
+@dataclass
+class RetryResult:
+    """Result of :meth:`MessagesResource.retry`."""
+
+    id: str
+    status: str
+    retry_count: int
+    raw: Dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "RetryResult":
+        return cls(
+            id=str(_f(d, "id", "")),
+            status=str(_f(d, "status", "")),
+            retry_count=int(_f(d, "retry_count", 0) or 0),
+            raw=d,
+        )
+
+
+@dataclass
+class BulkSendResult:
+    """Result of :meth:`MessagesResource.send_bulk`. Also supports ``result["batch_id"]``."""
+
+    batch_id: str
+    total_recipients: int
+    estimated_cost: float
+    status: str
+    raw: Dict[str, Any] = field(default_factory=dict, repr=False)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "BulkSendResult":
+        return cls(
+            batch_id=str(_f(d, "batch_id", "")),
+            total_recipients=int(_f(d, "total_recipients", 0) or 0),
+            estimated_cost=float(_f(d, "estimated_cost", 0) or 0),
+            status=str(_f(d, "status", "")),
+            raw=d,
+        )
+
+    def __getitem__(self, key: str) -> Any:  # back-compat: send_bulk used to return a dict
+        return self.raw[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.raw.get(key, default)
 
 
 @dataclass

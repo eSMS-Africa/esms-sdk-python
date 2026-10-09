@@ -105,7 +105,8 @@ def test_send_message(monkeypatch):
 def test_schedule_sets_mode(monkeypatch):
     def handler(url, data, method):
         assert data["schedule_mode"] == "scheduled"
-        assert data["scheduled_at"] == "2026-08-01T09:00:00"
+        # A naive datetime is sent as UTC (the API rejects times without a zone).
+        assert data["scheduled_at"] == "2026-08-01T09:00:00+00:00"
         return 200, {"id": "m", "status": "scheduled", "scheduled_at": data["scheduled_at"]}
 
     client, _ = make_client(monkeypatch, handler)
@@ -133,7 +134,7 @@ def test_insufficient_balance(monkeypatch):
             "currency": "KES",
         }
     }
-    client, _ = make_client(monkeypatch, lambda *a: (422, body))
+    client, _ = make_client(monkeypatch, lambda *a: (402, body))
     with pytest.raises(InsufficientBalanceError) as exc:
         client.messages.send(to="+256700000000", text="x")
     assert exc.value.balance == 1
@@ -177,3 +178,80 @@ def test_routes(monkeypatch):
     assert routes[0].code == "ESMS_UG"
     assert routes[0].price_per_segment == 35
     assert routes[0].is_active is True
+
+
+def test_send_has_idempotency_key(monkeypatch):
+    client, cap = make_client(monkeypatch, lambda u, d, m: (200, {"id": "m", "status": "submitted"}))
+    client.messages.send(to="+256700000000", text="Hi")
+    assert len(cap["headers"]["idempotency-key"]) == 36
+
+
+def test_naive_datetime_is_utc(monkeypatch):
+    from datetime import datetime
+
+    client, cap = make_client(monkeypatch, lambda u, d, m: (200, {"id": "m", "status": "scheduled"}))
+    client.messages.schedule(to="+256700000000", text="x", scheduled_at=datetime(2026, 8, 1, 9, 0))
+    assert cap["data"]["scheduled_at"] == "2026-08-01T09:00:00+00:00"
+
+
+def test_error_envelope_and_validation_list(monkeypatch):
+    from esms import InvalidRequestError, RateLimitError
+
+    body = {
+        "error": {"code": "validation_error", "message": "Request validation failed", "request_id": "r1"},
+        "detail": [{"loc": ["body", "to"], "msg": "Field required", "type": "missing"}],
+    }
+    client, _ = make_client(monkeypatch, lambda u, d, m: (422, body))
+    with pytest.raises(InvalidRequestError) as ei:
+        client.messages.send(to="", text="x")
+    assert ei.value.code == "validation_error"
+    assert ei.value.message == "Request validation failed: body.to: Field required"
+
+    client, _ = make_client(monkeypatch, lambda u, d, m: (429, {"error": "Rate limit exceeded: 30 per 1 minute"}))
+    with pytest.raises(RateLimitError) as ei:
+        client.balance.get()
+    assert ei.value.message == "Rate limit exceeded: 30 per 1 minute"
+
+
+def test_insufficient_balance_402_required_available(monkeypatch):
+    body = {"detail": {"code": "insufficient_balance", "message": "no", "required": 5, "available": 1}}
+    client, _ = make_client(monkeypatch, lambda u, d, m: (402, body))
+    with pytest.raises(InsufficientBalanceError) as ei:
+        client.messages.retry("m1")
+    assert ei.value.balance == 1 and ei.value.cost == 5
+
+
+def test_post_without_key_not_retried_on_5xx(monkeypatch):
+    import esms.client as ec
+    from esms import ApiError
+
+    monkeypatch.setattr(ec.time, "sleep", lambda s: None)
+    calls = []
+
+    def handler(u, d, m):
+        calls.append(u)
+        return 500, {"detail": "Internal server error"}
+
+    client, _ = make_client(monkeypatch, handler)
+    client._max_retries = 2
+    with pytest.raises(ApiError):
+        client.messages.retry("m1")
+    assert len(calls) == 1
+    calls.clear()
+    with pytest.raises(ApiError):
+        client.messages.send(to="+256700000000", text="x")
+    assert len(calls) == 3
+
+
+def test_retry_and_bulk_results(monkeypatch):
+    def handler(u, d, m):
+        if u.endswith("/retry"):
+            return 200, {"id": "m2", "status": "submitted", "retry_count": 1}
+        return 200, {"batch_id": "b1", "total_recipients": 2, "estimated_cost": 1.5, "status": "processing"}
+
+    client, cap = make_client(monkeypatch, handler)
+    r = client.messages.retry("m1")
+    assert (r.id, r.status, r.retry_count) == ("m2", "submitted", 1)
+    b = client.messages.send_bulk(text="hi", recipients=[{"to": "+256700000000"}])
+    assert b.batch_id == "b1" and b["batch_id"] == "b1" and b.total_recipients == 2
+    assert cap["data"] == {"text": "hi", "recipients": [{"to": "+256700000000"}]}
