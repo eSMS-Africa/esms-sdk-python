@@ -255,3 +255,50 @@ def test_retry_and_bulk_results(monkeypatch):
     b = client.messages.send_bulk(text="hi", recipients=[{"to": "+256700000000"}])
     assert b.batch_id == "b1" and b["batch_id"] == "b1" and b.total_recipients == 2
     assert cap["data"] == {"text": "hi", "recipients": [{"to": "+256700000000"}]}
+
+
+def test_insufficient_balance_currency_from_live_message(monkeypatch):
+    # The live API states the currency only inside the message text.
+    client, _ = make_client(monkeypatch, lambda u, d, m: (402, {
+        "error": {"code": "insufficient_balance", "message": "x", "request_id": "r"},
+        "detail": {"code": "insufficient_balance",
+                   "message": "Insufficient balance. Required KES 5.0, available KES 1.0",
+                   "required": 5.0, "available": 1.0},
+    }))
+    with pytest.raises(InsufficientBalanceError) as ei:
+        client.messages.send(to="+254711000000", text="x")
+    assert ei.value.currency == "KES"
+    assert ei.value.balance == 1.0 and ei.value.cost == 5.0
+
+
+def test_route_null_sender_stays_none(monkeypatch):
+    client, _ = make_client(monkeypatch, lambda u, d, m: (200, [{
+        "code": "ESMS_UG", "name": "Uganda", "country_code": "UG", "country_name": "Uganda",
+        "currency": "UGX", "price_per_segment": 30, "sender_id_default": None, "is_active": True,
+        "dial_code": "+256", "region": "East Africa"}]))
+    (r,) = client.routes.list()
+    assert r.sender_id_default is None
+    assert r.dial_code == "+256" and r.region == "East Africa"
+
+
+def test_send_and_bulk_advanced_options(monkeypatch):
+    client, cap = make_client(monkeypatch, lambda u, d, m: (200, {"id": "m", "status": "submitted"}))
+    client.messages.send(to="+256700000000", text="x", flash=True, validity_period=60, priority=1)
+    assert cap["data"]["flash"] is True and cap["data"]["validity_period"] == 60 and cap["data"]["priority"] == 1
+    client.messages.send_bulk(text="x", recipients=[{"to": "+256700000000"}], skip_unavailable=True)
+    assert cap["data"]["skip_unavailable"] is True
+    assert "flash" not in cap["data"]
+
+
+def test_non_json_2xx_raises_esms_error(monkeypatch):
+    import urllib.request
+    from esms import EsmsError
+
+    class HtmlResp(FakeResp):
+        def read(self):
+            return b"<html>gateway</html>"
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: HtmlResp(200, None))
+    client = Esms(api_key="esms_test_abc", max_retries=0)
+    with pytest.raises(EsmsError, match="non-JSON"):
+        client.balance.get()

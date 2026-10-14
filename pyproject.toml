@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "esms-sms"
-version = "1.0.0"
+version = "1.1.0"
 description = "Official Python SDK for the eSMS Africa SMS API"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -34,3 +34,4 @@ packages = ["src/esms"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]

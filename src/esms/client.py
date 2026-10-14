@@ -26,7 +26,7 @@ from .models import (
     SendResult,
 )
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 DEFAULT_BASE_URL = "https://sms.esmsafrica.io/api"
 
@@ -123,8 +123,19 @@ class Esms:
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
             try:
                 with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-                    raw = resp.read().decode("utf-8")
-                    return json.loads(raw) if raw else None
+                    raw = resp.read().decode("utf-8", "replace")
+                    status = resp.status
+                    rid = resp.headers.get("X-Request-Id") if resp.headers else None
+                if not raw:
+                    return None
+                try:
+                    return json.loads(raw)
+                except ValueError:
+                    # A 2xx that is not JSON (e.g. an HTML page from a proxy).
+                    raise EsmsError(
+                        f"Unexpected non-JSON response (HTTP {status})",
+                        status=status, detail=raw[:500], request_id=rid,
+                    ) from None
             except urllib.error.HTTPError as e:
                 raw = e.read().decode("utf-8", "replace")
                 parsed = _safe_json(raw)
@@ -163,11 +174,19 @@ class MessagesResource:
         scheduled_at: Optional[Union[str, datetime]] = None,
         international: Optional[bool] = None,
         idempotency_key: Optional[str] = None,
+        flash: Optional[bool] = None,
+        validity_period: Optional[int] = None,
+        priority: Optional[int] = None,
+        binary: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Send a single SMS.
 
         ``idempotency_key`` makes the send safe to retry (a repeat returns the
         original result). A random key is generated per call when omitted.
+
+        Advanced options: ``flash`` (class-0 SMS), ``validity_period`` (minutes,
+        1-4320), ``priority`` (0-3) and ``binary`` (``{"data": hex, "udh": hex,
+        "data_coding": 4}``, pass ``text=""``).
         """
         body = {
             "to": to,
@@ -177,6 +196,10 @@ class MessagesResource:
             "schedule_mode": schedule_mode,
             "scheduled_at": _iso(scheduled_at),
             "international": international,
+            "flash": flash,
+            "validity_period": validity_period,
+            "priority": priority,
+            "binary": {k: v for k, v in binary.items() if v is not None} if binary else None,
         }
         headers = {"Idempotency-Key": idempotency_key or str(uuid.uuid4())}
         return SendResult.from_dict(
@@ -272,13 +295,19 @@ class MessagesResource:
         scheduled_at: Optional[Union[str, datetime]] = None,
         drip_rate: Optional[int] = None,
         international: Optional[bool] = None,
+        flash: Optional[bool] = None,
+        validity_period: Optional[int] = None,
+        priority: Optional[int] = None,
+        skip_unavailable: Optional[bool] = None,
     ) -> BulkSendResult:
         """Send one message to many recipients.
 
         Pass ``contact_list_ids`` and/or inline ``recipients``
         (``[{"to": "+2567...", "name": ..., "vars": {...}}]``). ``schedule_mode``
         is ``now`` (default), ``scheduled`` (contact lists only) or ``drip``
-        (with ``drip_rate`` messages per minute). Track it with :meth:`get_batch`.
+        (with ``drip_rate`` messages per minute). ``skip_unavailable`` drops
+        (uncharged) recipients that cannot be reached instead of rejecting the
+        request. Track it with :meth:`get_batch`.
         """
         data = self._c._request(
             "POST",
@@ -293,6 +322,10 @@ class MessagesResource:
                 "scheduled_at": _iso(scheduled_at),
                 "drip_rate": drip_rate,
                 "international": international,
+                "flash": flash,
+                "validity_period": validity_period,
+                "priority": priority,
+                "skip_unavailable": skip_unavailable,
             },
         )
         return BulkSendResult.from_dict(data)

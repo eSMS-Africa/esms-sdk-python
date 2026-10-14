@@ -6,7 +6,10 @@ Every failure raised by the client is an :class:`EsmsError`. Inspect
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
+
+_CURRENCY_IN_MESSAGE = re.compile(r"\b(?:Required|available)\s+([A-Z]{3})\b")
 
 
 class EsmsError(Exception):
@@ -75,7 +78,16 @@ class InsufficientBalanceError(InvalidRequestError):
         # Some paths report available/required instead of balance/cost.
         self.balance = d.get("balance", d.get("available"))
         self.cost = d.get("cost", d.get("required"))
-        self.currency = d.get("currency")
+        # The API states the wallet currency only inside the message
+        # ("Required KES 5, available KES 1"), so recover it from there.
+        self.currency = d.get("currency") or _currency_from_message(d.get("message") or message)
+
+
+def _currency_from_message(message: Any) -> Optional[str]:
+    if not isinstance(message, str):
+        return None
+    m = _CURRENCY_IN_MESSAGE.search(message)
+    return m.group(1) if m else None
 
 
 class RateLimitError(EsmsError):

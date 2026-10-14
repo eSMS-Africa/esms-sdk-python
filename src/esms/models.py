@@ -199,8 +199,10 @@ class Route:
     country_name: str
     currency: str
     price_per_segment: float
-    sender_id_default: str
+    sender_id_default: Optional[str]
     is_active: bool
+    dial_code: Optional[str] = None
+    region: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "Route":
@@ -211,6 +213,13 @@ class Route:
             country_name=str(d.get("country_name", "")),
             currency=str(d.get("currency", "")),
             price_per_segment=float(d.get("price_per_segment", 0) or 0),
-            sender_id_default=str(d.get("sender_id_default", "")),
+            sender_id_default=_opt_str(d.get("sender_id_default")),
             is_active=bool(d.get("is_active", False)),
+            dial_code=_opt_str(d.get("dial_code")),
+            region=_opt_str(d.get("region")),
         )
+
+
+def _opt_str(v: Any) -> Optional[str]:
+    """str(v), but keep a JSON null as None (not the string "None")."""
+    return None if v is None else str(v)
