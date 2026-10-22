@@ -302,3 +302,15 @@ def test_non_json_2xx_raises_esms_error(monkeypatch):
     client = Esms(api_key="esms_test_abc", max_retries=0)
     with pytest.raises(EsmsError, match="non-JSON"):
         client.balance.get()
+
+
+def test_bulk_idempotency_key_and_cancel_endpoints(monkeypatch):
+    client, cap = make_client(monkeypatch, lambda u, d, m: (200, {"batch_id": "b1", "status": "cancelled"}))
+    client.messages.send_bulk(text="x", recipients=[{"to": "+256700000000"}], idempotency_key="k-1")
+    assert cap["headers"]["idempotency-key"] == "k-1"
+    client.messages.send_bulk(text="x", recipients=[{"to": "+256700000000"}])
+    assert cap["headers"]["idempotency-key"]
+    client.messages.cancel("m1")
+    assert cap["url"].endswith("/messages/m1/cancel") and cap["method"] == "POST"
+    client.messages.cancel_batch("b1")
+    assert cap["url"].endswith("/messages/batch/b1/cancel")

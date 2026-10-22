@@ -2,6 +2,14 @@
 
 All notable changes to this SDK. Versions follow [semver](https://semver.org).
 
+## Unreleased
+
+### Added
+- `messages.cancel(id)` cancels a scheduled message and `messages.cancel_batch(batch_id)` a scheduled bulk batch; the charge is refunded.
+
+### Fixed
+- `send_bulk` sends an Idempotency-Key (generated when you do not pass one), so a retried bulk call can never send or charge the batch twice.
+
 ## 1.1.0 - 2026-10-14
 
 First release since 1.0.0; it also ships the unreleased work below that was on `main`.

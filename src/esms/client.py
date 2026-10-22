@@ -299,6 +299,7 @@ class MessagesResource:
         validity_period: Optional[int] = None,
         priority: Optional[int] = None,
         skip_unavailable: Optional[bool] = None,
+        idempotency_key: Optional[str] = None,
     ) -> BulkSendResult:
         """Send one message to many recipients.
 
@@ -307,11 +308,14 @@ class MessagesResource:
         is ``now`` (default), ``scheduled`` (contact lists only) or ``drip``
         (with ``drip_rate`` messages per minute). ``skip_unavailable`` drops
         (uncharged) recipients that cannot be reached instead of rejecting the
-        request. Track it with :meth:`get_batch`.
+        request. Track it with :meth:`get_batch`. ``idempotency_key`` (one is
+        generated when omitted) makes retries safe: a repeat returns the
+        original batch instead of sending and charging it again.
         """
         data = self._c._request(
             "POST",
             "/messages/send-bulk",
+            headers={"Idempotency-Key": idempotency_key or str(uuid.uuid4())},
             body={
                 "contact_list_ids": contact_list_ids,
                 "recipients": recipients,
@@ -329,6 +333,14 @@ class MessagesResource:
             },
         )
         return BulkSendResult.from_dict(data)
+
+    def cancel(self, message_id: str) -> Dict[str, Any]:
+        """Cancel a scheduled message before it is sent; the charge is refunded."""
+        return self._c._request("POST", f"/messages/{_q(message_id)}/cancel")
+
+    def cancel_batch(self, batch_id: str) -> Dict[str, Any]:
+        """Cancel a scheduled bulk batch before its send time; the charge is refunded."""
+        return self._c._request("POST", f"/messages/batch/{_q(batch_id)}/cancel")
 
     def get_batch(self, batch_id: str, *, page: int = 0, limit: int = 50) -> Dict[str, Any]:
         """Aggregate status of a bulk batch plus a page of its messages."""
