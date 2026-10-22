@@ -62,6 +62,40 @@ summary = esms.messages.get_batch(batch.batch_id)
 
 Advanced options: `flash=True` (class-0 SMS shown on screen), `validity_period` (minutes, 1-4320), `priority` (0-3) and `binary={"data": hex, "udh": hex}` (pass `text=""`). `send_bulk` also takes `flash`, `validity_period`, `priority` and `skip_unavailable=True` (drop unreachable recipients, uncharged, instead of rejecting the whole batch).
 
+## Personalised bulk + campaigns
+
+Requires SDK 1.2.0 or later.
+
+```python
+# One call: a template with per-recipient merge fields. Invalid, duplicate and
+# opted-out numbers come back in "rejected" and are never charged.
+batch = esms.messages.send_batch(
+    template="Hi {first_name|there}, your balance is UGX {balance}. Pay by {due_date}.",
+    recipients=[
+        {"to": "+256772123456", "name": "Ada Obi", "vars": {"balance": "1,500", "due_date": "1 Nov"}},
+        {"to": "0701234567", "vars": {"balance": "200", "due_date": "1 Nov"}},
+    ],
+    default_country="UG",
+    sender_id="ACMEBANK",
+    schedule={"mode": "scheduled", "at": "2026-11-01T09:00", "timezone": "Africa/Kampala"},
+)
+status = esms.messages.get_batch(batch["batch_id"])
+
+# Big lists: upload a CSV / Excel file, map columns, then run a campaign.
+imp = esms.imports.upload("debtors.xlsx", default_country="UG")
+job = esms.imports.process(imp["id"], mapping={"phone": "Mobile", "name": "Name", "fields": {"Amount Due": "amount"}})
+# poll esms.jobs.get(job["job_id"]) until status is "done"
+c = esms.campaigns.create(name="October dues", text="Hi {first_name}, you owe {amount|0}.",
+                          audience=[{"type": "import", "id": imp["id"]}], idempotency_key="october-dues")
+esms.campaigns.prepare(c["id"])            # exact cost per country + checks
+if esms.campaigns.review(c["id"])["review"]["can_launch"]:
+    esms.campaigns.launch(c["id"])
+report = esms.campaigns.report(c["id"])
+```
+
+Also: `campaigns.pause/resume/cancel/retry_failed/duplicate/recipients/runs`, `contacts`, `groups`, `templates` (with `starter_pack()` and `use_starter(key)`).
+The signed `campaign.completed` webhook uses the same `Esms.verify_webhook` check.
+
 ## Delivery status
 
 ```python

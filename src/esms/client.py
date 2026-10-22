@@ -26,7 +26,7 @@ from .models import (
     SendResult,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 DEFAULT_BASE_URL = "https://sms.esmsafrica.io/api"
 
@@ -71,6 +71,15 @@ class Esms:
         self.verify = VerifyResource(self)
         self.opt_outs = OptOutsResource(self)
 
+        from .v2 import (CampaignsResource, ContactsResource, GroupsResource, ImportsResource,
+                         JobsResource, TemplatesResource)
+        self.campaigns = CampaignsResource(self)
+        self.imports = ImportsResource(self)
+        self.jobs = JobsResource(self)
+        self.contacts = ContactsResource(self)
+        self.groups = GroupsResource(self)
+        self.templates = TemplatesResource(self)
+
     @staticmethod
     def verify_webhook(raw_body: Union[str, bytes], signature: Optional[str], secret: str) -> bool:
         """Verify an incoming webhook's HMAC-SHA256 signature (constant-time).
@@ -94,6 +103,8 @@ class Esms:
         params: Optional[Dict[str, Any]] = None,
         body: Optional[Dict[str, Any]] = None,
         headers: Optional[Dict[str, str]] = None,
+        raw: Optional[bytes] = None,
+        content_type: Optional[str] = None,
     ) -> Any:
         url = self.base_url + path
         if params:
@@ -110,7 +121,10 @@ class Esms:
         if headers:
             req_headers.update({k: v for k, v in headers.items() if v is not None})
         headers = req_headers
-        if body is not None:
+        if raw is not None:
+            data = raw
+            headers["Content-Type"] = content_type or "application/octet-stream"
+        elif body is not None:
             clean_body = {k: v for k, v in body.items() if v is not None}
             data = json.dumps(clean_body).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -333,6 +347,21 @@ class MessagesResource:
             },
         )
         return BulkSendResult.from_dict(data)
+
+    def send_batch(self, **params: Any) -> Dict[str, Any]:
+        """Personalised bulk send (``POST /v1/messages/batch``), durable and resumable.
+
+        Pass ``template`` + ``recipients=[{"to", "name", "vars", "text"}]`` or
+        ``messages=[{"to", "text"}]``, plus optional ``sender_id``,
+        ``sender_fallback``, ``message_type``, ``name``, ``tags``,
+        ``default_country``, ``schedule={"mode", "at", "timezone", "recurrence"}``,
+        ``throttle_per_minute``, ``callback_url``. An Idempotency-Key is generated
+        unless you pass ``idempotency_key``, so a retry never sends twice.
+        Returns ``batch_id``, ``campaign_id``, ``status``, ``accepted``,
+        ``rejected``, ``estimated_cost``, ``currency`` ...
+        """
+        key = params.pop("idempotency_key", None) or str(uuid.uuid4())
+        return self._c._request("POST", "/messages/batch", body=params, headers={"Idempotency-Key": key})
 
     def cancel(self, message_id: str) -> Dict[str, Any]:
         """Cancel a scheduled message before it is sent; the charge is refunded."""

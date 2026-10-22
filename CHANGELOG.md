@@ -2,9 +2,14 @@
 
 All notable changes to this SDK. Versions follow [semver](https://semver.org).
 
-## Unreleased
+## 1.2.0 - 2026-10-22
 
 ### Added
+- `messages.send_batch()` - personalised bulk (`POST /v1/messages/batch`): a template with per-recipient `vars` (or full messages), schedule with timezone or recurrence, throttle, callback URL; an Idempotency-Key is generated per call.
+- `campaigns` (create, list, get, update, delete, preview, prepare, review, test, launch, approve, reject, pause, resume, cancel, retry_failed, duplicate, report, stats, recipients, runs).
+- `imports` (multipart file upload from a path, bytes or a file object; paste, Google Sheets, get, process, errors, recipients, save_to_group) and `jobs.get`.
+- `contacts` (contact book by phone) and `groups` (CRUD + contacts).
+- `templates` (CRUD, `starter_pack`, `use_starter`, `render`).
 - `messages.cancel(id)` cancels a scheduled message and `messages.cancel_batch(batch_id)` a scheduled bulk batch; the charge is refunded.
 
 ### Fixed
