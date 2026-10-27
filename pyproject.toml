@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.26,<2"]
 build-backend = "hatchling.build"
 
 [project]
 name = "esms-sms"
-version = "1.2.0"
+version = "1.2.1"
 description = "Official Python SDK for the eSMS Africa SMS API"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -28,6 +28,9 @@ dev = ["pytest>=7", "mypy>=1.0"]
 Homepage = "https://esmsafrica.io"
 Documentation = "https://docs.esmsafrica.io/docs/sdks"
 Source = "https://github.com/eSMS-Africa/esms-sdk-python"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/esms", "tests", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/esms"]

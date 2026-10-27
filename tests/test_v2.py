@@ -7,6 +7,8 @@ import urllib.request
 
 import pytest
 
+import esms.client as esms_client
+
 from esms import Esms
 
 
@@ -36,7 +38,7 @@ def calls(monkeypatch):
         return Resp(204 if req.get_method() == "DELETE" and "/contacts/" in req.full_url else 200,
                     None if req.get_method() == "DELETE" and "/contacts/" in req.full_url else {"id": 1, "ok": True})
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    monkeypatch.setattr(esms_client, "_urlopen", fake)
     return seen
 
 

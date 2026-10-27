@@ -26,13 +26,43 @@ from .models import (
     SendResult,
 )
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 
 DEFAULT_BASE_URL = "https://sms.esmsafrica.io/api"
 
 # Methods that are safe to repeat after a 5xx or network error. A POST is only
 # retried then when it carries an Idempotency-Key.
 _IDEMPOTENT_METHODS = {"GET", "HEAD", "PUT", "DELETE", "OPTIONS"}
+
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects without leaking the API key.
+
+    urllib copies every request header onto the redirected request, so a 30x to
+    another host (or an https -> http downgrade) would send ``Authorization`` with
+    it. The key is attached as an unredirected header instead, and only put back
+    when the redirect stays on the same scheme, host and port.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        old_u = urllib.parse.urlsplit(req.full_url)
+        new_u = urllib.parse.urlsplit(new.full_url)
+        same_origin = (old_u.scheme, old_u.hostname, old_u.port) == (new_u.scheme, new_u.hostname, new_u.port)
+        auth = req.unredirected_hdrs.get("Authorization")
+        if auth and same_origin:
+            new.add_unredirected_header("Authorization", auth)
+        return new
+
+
+_OPENER = urllib.request.build_opener(_SafeRedirectHandler())
+
+
+def _urlopen(req: urllib.request.Request, timeout: float) -> Any:
+    return _OPENER.open(req, timeout=timeout)
 
 
 class Esms:
@@ -114,7 +144,6 @@ class Esms:
 
         data = None
         req_headers = {
-            "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json",
             "User-Agent": f"esms-python/{__version__}",
         }
@@ -135,8 +164,10 @@ class Esms:
         last_exc: Optional[BaseException] = None
         for attempt in range(self._max_retries + 1):
             req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            # Unredirected: never copied onto a redirect to another origin.
+            req.add_unredirected_header("Authorization", f"Bearer {self._api_key}")
             try:
-                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                with _urlopen(req, timeout=self._timeout) as resp:
                     raw = resp.read().decode("utf-8", "replace")
                     status = resp.status
                     rid = resp.headers.get("X-Request-Id") if resp.headers else None

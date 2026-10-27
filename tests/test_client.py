@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+import esms.client as esms_client
+
 from esms import (
     AuthenticationError,
     Esms,
@@ -50,7 +52,7 @@ def make_client(monkeypatch, handler):
             )
         return FakeResp(status, body)
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(esms_client, "_urlopen", fake_urlopen)
     client = Esms(api_key="esms_test_abc", max_retries=0)
     return client, captured
 
@@ -154,7 +156,7 @@ def test_connection_error(monkeypatch):
     def boom(req, timeout=None):
         raise OSError("network down")
 
-    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr(esms_client, "_urlopen", boom)
     client = Esms(api_key="k", max_retries=0)
     with pytest.raises(EsmsConnectionError):
         client.balance.get()
@@ -298,7 +300,7 @@ def test_non_json_2xx_raises_esms_error(monkeypatch):
         def read(self):
             return b"<html>gateway</html>"
 
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: HtmlResp(200, None))
+    monkeypatch.setattr(esms_client, "_urlopen", lambda req, timeout=None: HtmlResp(200, None))
     client = Esms(api_key="esms_test_abc", max_retries=0)
     with pytest.raises(EsmsError, match="non-JSON"):
         client.balance.get()
@@ -314,3 +316,57 @@ def test_bulk_idempotency_key_and_cancel_endpoints(monkeypatch):
     assert cap["url"].endswith("/messages/m1/cancel") and cap["method"] == "POST"
     client.messages.cancel_batch("b1")
     assert cap["url"].endswith("/messages/batch/b1/cancel")
+
+
+def _serve(handler_cls):
+    import http.server
+    import threading
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), handler_cls)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+def test_redirect_never_leaks_api_key_to_another_origin():
+    import http.server
+
+    seen = {}
+
+    class Target(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen[self.path] = self.headers.get("Authorization")
+            body = b'{"ok": true}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    other = _serve(Target)
+
+    class Origin(Target):
+        def do_GET(self):
+            if self.path.startswith("/api/cross"):
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{other.server_port}/stolen")
+                self.end_headers()
+            elif self.path.startswith("/api/same"):
+                self.send_response(307)
+                self.send_header("Location", "/api/landed")
+                self.end_headers()
+            else:
+                super().do_GET()
+
+    origin = _serve(Origin)
+    try:
+        c = Esms(api_key="esms_live_secret", base_url=f"http://127.0.0.1:{origin.server_port}/api", max_retries=0)
+        c._request("GET", "/cross")
+        assert "/stolen" in seen and seen["/stolen"] is None
+        c._request("GET", "/same")
+        assert seen["/api/landed"] == "Bearer esms_live_secret"
+    finally:
+        origin.shutdown()
+        other.shutdown()

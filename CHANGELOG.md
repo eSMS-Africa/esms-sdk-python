@@ -2,6 +2,12 @@
 
 All notable changes to this SDK. Versions follow [semver](https://semver.org).
 
+## 1.2.1 - 2026-10-27
+
+### Security
+- The API key is no longer forwarded when the API (or a proxy in front of it) answers with a redirect to another origin, including an https -> http downgrade. Same-origin redirects keep working.
+- The source distribution now ships only the package, tests and docs (no CI files).
+
 ## 1.2.0 - 2026-10-22
 
 ### Added
