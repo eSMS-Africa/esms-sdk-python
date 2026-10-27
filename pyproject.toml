@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "eSMS Africa", email = "support@esmsafrica.io" }]
-keywords = ["esms", "sms", "africa", "bulk sms", "otp", "messaging"]
+keywords = ["esms", "esms africa", "sms", "sms api", "bulk sms", "sms gateway", "otp", "verification", "2fa", "messaging", "africa"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -27,7 +27,12 @@ dev = ["pytest>=7", "mypy>=1.0"]
 [project.urls]
 Homepage = "https://esmsafrica.io"
 Documentation = "https://docs.esmsafrica.io/docs/sdks"
+"SMS API" = "https://esmsafrica.io/sms-api"
+Pricing = "https://esmsafrica.io/pricing"
+"Sign up" = "https://auth.esmsafrica.io/register?service=sms"
 Source = "https://github.com/eSMS-Africa/esms-sdk-python"
+Issues = "https://github.com/eSMS-Africa/esms-sdk-python/issues"
+Changelog = "https://github.com/eSMS-Africa/esms-sdk-python/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/esms", "tests", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]

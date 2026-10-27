@@ -4,6 +4,15 @@ Official Python SDK for the [eSMS Africa](https://esmsafrica.io) SMS API.
 
 Send SMS across Africa, track delivery, schedule messages, run managed OTP verification, and check your balance. Fully typed, zero required dependencies (uses the standard library).
 
+## Links
+
+- Website: [esmsafrica.io](https://esmsafrica.io)
+- Documentation: [docs.esmsafrica.io](https://docs.esmsafrica.io) (SDK guide: [docs.esmsafrica.io/docs/sdks](https://docs.esmsafrica.io/docs/sdks))
+- SMS API overview: [esmsafrica.io/sms-api](https://esmsafrica.io/sms-api)
+- Pricing (pay as you go, no setup fee): [esmsafrica.io/pricing](https://esmsafrica.io/pricing)
+- Create an account and get an API key: [auth.esmsafrica.io/register](https://auth.esmsafrica.io/register?service=sms)
+- Support: support@esmsafrica.io - Sales: sales@esmsafrica.io
+
 ## Install
 
 ```bash
